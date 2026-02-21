@@ -21,5 +21,10 @@ userSchema.virtual("userName").get(function() {
     return `${this.firstName} ${this.lastName}`;
 });
 
+userSchema.add({
+    otp: { type: String },
+    otpExpiration: { type: Date }
+});
+
 const userModel = mongoose.models.user || mongoose.model("user", userSchema);
 export default userModel;

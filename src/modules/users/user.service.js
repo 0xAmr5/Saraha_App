@@ -1,88 +1,80 @@
-import { providerEnum } from "../../common/enum/user.enum.js";
-import { successResponse } from "../../common/utils/response.success.js";
-import { GenerateToken } from "../../common/utils/token.service.js";
-import * as db_service from "../../DB/db.service.js";
+// التعديل هنا: شيلنا الأقواس من حول userModel لأنه export default
 import userModel from "../../DB/models/user.model.js";
-import { Hash, Compare } from "../../common/utils/security/hash.security.js"; 
-import { encrypt, decrypt } from "../../common/utils/security/encrypt.security.js";
 import { sendEmail } from "../../common/utils/email/send.email.js";
-import { v4 as uuidv4 } from "uuid";
+import { Hash, Compare } from "../../common/utils/security/hash.security.js";
+import { encrypt } from "../../common/utils/security/encrypt.security.js";
+import { GenerateToken } from "../../common/utils/token.service.js";
 
-export const signUp = async (req, res) => {
-    const { userName, email, password, cPassword, gender, phone } = req.body;
+// 1. SignUp Logic
+export const signUp = async (req, res, next) => {
+    const { firstName, lastName, email, password, gender, phone } = req.body;
 
-    if (password !== cPassword) {
-        throw new Error("Confirmed password must match the password 🔴", { cause: 400 });
+    const userExist = await userModel.findOne({ email });
+    if (userExist) {
+        throw new Error(`Email ${email} already exist 🔴`);
     }
 
-    if (await db_service.findOne({ model: userModel, filter: { email } })) {
-        throw new Error(`Email ${email} already exist 🔴`, { cause: 400 });
-    }
+    const hashedPassword = Hash({ plain_text: password });
+    const encryptedPhone = encrypt({ plainText: phone });
 
-    const hashedPassword = Hash({ plain_text: password }); 
-    const encryptedPhone = encrypt({ plain_text: phone });
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiration = new Date(Date.now() + 5 * 60 * 1000); 
 
-    const user = await db_service.create({
-        model: userModel, 
-        data: { 
-            firstName: userName, 
-            email, 
-            password: hashedPassword, 
-            gender, 
-            phone: encryptedPhone 
-        } 
+    const newUser = await userModel.create({
+        firstName,
+        lastName,
+        email,
+        password: hashedPassword,
+        gender,
+        phone: encryptedPhone,
+        otp,
+        otpExpiration,
+        confirmed: false // تأكدنا إن الحالة الافتراضية غير مفعل
     });
 
     await sendEmail({
         to: email,
-        subject: "Welcome to Saraha App 💙",
-        html: `<h1>Hi ${userName}</h1><p>Your OTP for verification is: <b>123456</b></p>`
+        subject: "Verify your account - Saraha App 💙",
+        html: `<h1>Your OTP is: ${otp}</h1>`
     });
 
-    return successResponse({ 
-        res, 
-        status: 201, 
-        message: "User signed up successfully. Check your email ✅", 
-        data: user 
+    return res.status(201).json({ 
+        message: "User signed up successfully. Check your email for OTP ✅", 
+        data: { id: newUser._id, email: newUser.email } 
     });
 };
 
-export const signIn = async (req, res) => {
+// 2. Confirm Email Logic
+export const confirmEmail = async (req, res, next) => {
+    const { email, otp } = req.body;
+    const user = await userModel.findOne({ email });
+    
+    if (!user) throw new Error("User not found 🔴");
+    if (user.otp !== otp) throw new Error("Invalid OTP 🔴");
+    if (new Date() > user.otpExpiration) throw new Error("OTP has expired 🔴");
+
+    await userModel.updateOne(
+        { email },
+        { confirmed: true, $unset: { otp: 1, otpExpiration: 1 } }
+    );
+
+    return res.status(200).json({ message: "Email confirmed successfully ✅" });
+};
+
+// 3. SignIn Logic
+export const signIn = async (req, res, next) => {
     const { email, password } = req.body;
-
-    const user = await db_service.findOne({
-        model: userModel, 
-        filter: { email, provider: providerEnum.system } 
-    });
-
-    if (!user) {
-        throw new Error("Invalid email ❌", { cause: 400 });
+    const user = await userModel.findOne({ email });
+    
+    if (!user || !user.confirmed) {
+        throw new Error("Invalid email or email not confirmed 🔴");
     }
 
-    const match = Compare({ plain_text: password, cipher_text: user.password });
-    if (!match) {
-        throw new Error("Invalid password ❌", { cause: 400 });
+    const isPasswordMatch = Compare({ plain_text: password, cipher_text: user.password });
+    if (!isPasswordMatch) {
+        throw new Error("Invalid password 🔴");
     }
 
-    const access_token = GenerateToken({
-        payload: { id: user._id }, 
-        secret_key: "amr", 
-        options: { jti: uuidv4() } 
-    });
-
-    return successResponse({
-        res, 
-        status: 200, 
-        message: "User signed in successfully ✅", 
-        data: { access_token } 
-    });
-};
-
-export const getProfile = async (req, res) => {
-    const decryptedPhone = decrypt({ cipher_text: req.user.phone });
-
-    return successResponse({
-        res, 
-        data: { ...req.user._doc, phone: decryptedPhone } 
-    });
+    const token = GenerateToken({ payload: { id: user._id, email: user.email }, signature: "Amr" });
+    return res.status(200).json({ message: "Signed in successfully ✅", token });
 };

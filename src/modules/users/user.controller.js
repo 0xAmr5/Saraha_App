@@ -1,9 +1,10 @@
 import { Router } from "express";
-import * as US from "./user.service.js";
+import * as userService from "./user.service.js"; 
 
 const userRouter = Router();
 
-userRouter.post("/signUp", US.signUp);
-userRouter.post("/signIn", US.signIn);
+userRouter.post("/signup", userService.signUp);
+userRouter.patch("/confirm-email", userService.confirmEmail);
+userRouter.post("/signin", userService.signIn);
 
 export default userRouter;

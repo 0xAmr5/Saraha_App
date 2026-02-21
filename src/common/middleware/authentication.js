@@ -9,16 +9,19 @@ export const authentication = async (req, res, next) => {
         throw new Error("Token is required 🔴", { cause: 400 });
     }
 
-    const decoded = VerifyToken({ token: authorization, secret_key: "mohamed" });
+    const decoded = VerifyToken({ 
+        token: authorization, 
+        secret_key: "Amr" 
+    });
 
     if (!decoded || !decoded.id) {
         throw new Error("Invalid token ❌", { cause: 400 });
     }
 
-    const user = await db_service.findById({ 
-        model: userModel, 
-        id: decoded.id, 
-        options: { select: "-password" } 
+    const user = await db_service.findById({
+        model: userModel,
+        id: decoded.id,
+        options: { select: "-password" }
     });
 
     if (!user) {
@@ -28,3 +31,4 @@ export const authentication = async (req, res, next) => {
     req.user = user;
     next();
 };
+
