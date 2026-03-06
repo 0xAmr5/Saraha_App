@@ -28,3 +28,41 @@ userSchema.add({
 
 const userModel = mongoose.models.user || mongoose.model("user", userSchema);
 export default userModel;
+
+
+import { OAuth2Client } from 'google-auth-library';
+const client = new OAuth2Client();
+
+export const loginWithGmail = async (req, res, next) => {
+    const { idToken } = req.body;
+    
+    try {
+        const ticket = await client.verifyIdToken({
+            idToken,
+            audience: process.env.GOOGLE_CLIENT_ID, 
+        });
+        const { email, given_name, family_name } = ticket.getPayload();
+
+        let user = await userModel.findOne({ email });
+        
+        if (!user) {
+            user = await userModel.create({
+                firstName: given_name,
+                lastName: family_name,
+                email,
+                password: Hash({ plain_text: "OAuth_Default_Password" }), 
+                confirmed: true, 
+                provider: "google"
+            });
+        }
+
+        const token = GenerateToken({ 
+            payload: { id: user._id, email: user.email }, 
+            signature: "Amr" 
+        });
+        
+        return res.status(200).json({ message: "Success ✅", token });
+    } catch (error) {
+        return res.status(400).json({ message: "Invalid Google Token 🔴", error: error.message });
+    }
+};
