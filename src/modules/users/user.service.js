@@ -137,3 +137,78 @@ export const getProfile = async (req, res, next) => {
         return res.status(500).json({ message: error.message });
     }
 };
+
+
+
+
+
+
+export const logout = async (req, res, next) => {
+    const { flag } = req.query;
+
+    if (flag === "all") {
+        req.user.changeCredentialTime = new Date();
+        await req.user.save();
+        
+        await db_service.deleteMany({
+            model: reModel,
+            filter: { userId: req.user._id }
+        });
+    } else {
+        await db_service.create({
+            model: reModel,
+            data: {
+                tokenId: req.decoded.jti, 
+                userId: req.user._id,
+                expiredAt: new Date(req.decoded.exp * 1000)
+            }
+        });
+    }
+
+    return successResponse({ res });
+};
+
+// Upload Cover Images (Max 2)
+export const uploadCover = async (req, res, next) => {
+    const user = await userModel.findById(req.user.id);
+    const existingCovers = user.coverPicture?.length || 0;
+    const newCovers = req.files?.attachments?.length || 0;
+
+    if (existingCovers + newCovers !== 2) {
+        req.files.attachments.forEach(file => fs.unlinkSync(file.path));
+        return next(new Error("Total cover images must be exactly 2 🔴", { cause: 400 }));
+    }
+
+    const updatedUser = await userModel.findByIdAndUpdate(req.user.id, 
+        { $push: { coverPicture: { $each: req.files.attachments.map(f => f.path) } } }, 
+        { new: true }
+    );
+    return res.status(200).json({ message: "Done ✅", updatedUser });
+};
+
+// Update Profile Picture (Move old to gallery)
+export const updateProfilePic = async (req, res, next) => {
+    const user = await userModel.findById(req.user.id);
+    const oldPic = user.profilePicture;
+
+    const updatedUser = await userModel.findByIdAndUpdate(req.user.id, {
+        profilePicture: req.file.path, 
+        $push: { gallery: oldPic }   
+    }, { new: true });
+
+    return res.status(200).json({ message: "Profile updated ✅", updatedUser });
+};
+
+
+// Remove Profile Picture
+export const removeProfilePic = async (req, res, next) => {
+    const user = await userModel.findById(req.user.id);
+    
+    if (user.profilePicture && fs.existsSync(user.profilePicture)) {
+        fs.unlinkSync(user.profilePicture); 
+    }
+
+    await userModel.findByIdAndUpdate(req.user.id, { $set: { profilePicture: null } });
+    return res.status(200).json({ message: "Image deleted from disk ✅" });
+};
+

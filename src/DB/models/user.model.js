@@ -66,3 +66,24 @@ export const loginWithGmail = async (req, res, next) => {
         return res.status(400).json({ message: "Invalid Google Token 🔴", error: error.message });
     }
 };
+
+// Get Profile (Increase visit count)
+export const getProfile = async (req, res, next) => {
+    const user = await userModel.findByIdAndUpdate(
+        req.params.id, 
+        { $inc: { visitCount: 1 } }, 
+        { new: true }
+    ).select("-visitCount");
+    
+    return res.status(200).json({ user });
+};
+
+
+
+// Get Visit Stats (Admin only)
+export const getVisitStats = async (req, res, next) => {
+    if (req.user.role !== 'admin') return next(new Error("Not authorized 🔴", { cause: 403 }));
+    
+    const user = await userModel.findById(req.params.id).select("visitCount");
+    return res.status(200).json({ totalVisits: user.visitCount });
+};

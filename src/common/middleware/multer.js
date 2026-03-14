@@ -21,3 +21,10 @@ export const multer_local = ({ custom_types = [] } = {}) => {
 
     return multer({ storage, fileFilter });
 };
+
+import fs from 'fs';
+
+const destinationPath = 'uploads';
+if (!fs.existsSync(destinationPath)) {
+    fs.mkdirSync(destinationPath, { recursive: true });
+}

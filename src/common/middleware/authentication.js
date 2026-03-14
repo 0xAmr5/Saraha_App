@@ -1,34 +1,44 @@
 import { VerifyToken } from "../utils/token.service.js";
 import * as db_service from "../../DB/db.service.js";
 import userModel from "../../DB/models/user.model.js";
-
-export const authentication = async (req, res, next) => {
-    const { authorization } = req.headers;
-
-    if (!authorization) {
-        throw new Error("Token is required 🔴", { cause: 400 });
+import reModel from "../../DB/models/revokeToken.model.js";
+ export const authentication = async (req, res, next) => {
+    if (prefix !== PREFIX) {
+        throw new Error("Invalid toden prefix");
     }
 
-    const decoded = VerifyToken({ 
-        token: authorization, 
-        secret_key: "Amr" 
+    const decoded = verifyToken({
+        token,
+        secret_key: "secretKey",
     });
 
-    if (!decoded || !decoded.id) {
-        throw new Error("Invalid token ❌", { cause: 400 });
+    if (!decoded || !decoded?.id) {
+        throw new Error("Invalid token");
     }
 
-    const user = await db_service.findById({
+    const user = await db_service.findOne({
         model: userModel,
         id: decoded.id,
-        options: { select: "-password" }
+        select: "-password",
     });
 
     if (!user) {
-        throw new Error("User not found 🔴", { cause: 404 });
+        throw new Error("user not exist", { cause: 400 });
+    }
+
+    if (user?.changeCredential?.getTime() > decoded.iat) {
+        throw new Error("token expired");
+    }
+
+    const revokeToken = await get(
+        revoked_key({ userId: decoded.id, jti: decoded.jti }),
+    );
+
+    if (revokeToken) {
+        throw new Error("Invalid token revoked");
     }
 
     req.user = user;
+    req.req_decoded = decoded;
     next();
 };
-
