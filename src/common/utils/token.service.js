@@ -1,7 +1,7 @@
-import jwt from "jsonwebtoken";
+import jwt from 'jsonwebtoken';
 
-export const GenerateToken = ({ payload, secret_key, options = {} } = {}) => {
-    return jwt.sign(payload, secret_key, options);
+export const GenerateToken = ({ payload = {}, signature = "Amr", options = {} }) => {
+    return jwt.sign(payload, signature, options);
 };
 
 export const VerifyToken = ({ token, secret_key, options = {} } = {}) => {

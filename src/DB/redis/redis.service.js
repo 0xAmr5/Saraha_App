@@ -1,6 +1,11 @@
 import { redisClient } from "./redis.db.js";
 
-export const set = async ({ key, value, ttl = {} }) => {
+// 1. إضافة دوال توليد المفاتيح (مهمة جداً للـ Logout)
+export const get_key = (userId) => `profile::${userId}`;
+export const revoked_key = ({ userId, jti }) => `revoked_key:${userId}:${jti}`;
+
+// 2. تعديل اسم الدالة لـ setValue بدل set عشان تطابق الـ import
+export const setValue = async ({ key, value, ttl }) => {
     try {
         const data = typeof value === "string" ? value : JSON.stringify(value);
         return ttl 
@@ -11,12 +16,11 @@ export const set = async ({ key, value, ttl = {} }) => {
     }
 };
 
+// 3. باقي الدوال زي ما هي مع التأكد من الـ export
 export const update = async ({ key, value = {} }) => {
     try {
         const data = typeof value === "string" ? value : JSON.stringify(value);
-        if (!(await redisClient.exists(key))) {
-            return 0;
-        }
+        if (!(await redisClient.exists(key))) return 0;
         return await redisClient.set(key, data);
     } catch (error) {
         console.log("error to update data in redis", error);
@@ -25,43 +29,20 @@ export const update = async ({ key, value = {} }) => {
 
 export const get = async (key) => {
     try {
+        const data = await redisClient.get(key);
         try {
-            return JSON.parse(await redisClient.get(key));
+            return JSON.parse(data);
         } catch (error) {
-            return await redisClient.get(key);
+            return data;
         }
     } catch (error) {
         console.log("error to get data in redis", error);
     }
 };
 
-export const ttl = async (key) => {
-    try {
-        return await redisClient.ttl(key);
-    } catch (error) {
-        console.log("error to get ttl data in redis", error);
-    }
-};
-
-export const expire = async (key) => {
-    try {
-        return await redisClient.expire(key);
-    } catch (error) {
-        console.log("error to get expire data in redis", error);
-    }
-};
-
-export const exists = async (key) => {
-    try {
-        return await redisClient.exists(key);
-    } catch (error) {
-        console.log("error to exist data in redis", error);
-    }
-};
-
 export const deleteKey = async (key) => {
     try {
-        if (!key.length) return 0;
+        if (!key || !key.length) return 0;
         return await redisClient.del(key);
     } catch (error) {
         console.log("error to delete data in redis", error);
@@ -75,4 +56,3 @@ export const keys = async (pattern = "*") => {
         console.log("error to get keys from redis", error);
     }
 };
-

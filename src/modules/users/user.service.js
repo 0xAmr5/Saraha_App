@@ -1,172 +1,244 @@
+import { providerEnum } from "../../common/enum/user.enum.js";
+import { successResponse } from "../../common/utils/response.success.js";
+import {
+  decrypt,
+  encrypt,
+} from "../../common/utils/security/encrypt.security.js";
+import { Compare, Hash } from "../../common/utils/security/hash.security.js";
+import { GenerateToken, VerifyToken } from "../../common/utils/token.service.js";
+import {randomUUID} from "crypto"
+import * as db_service from "../../DB/db.service.js";
 import userModel from "../../DB/models/user.model.js";
-import { sendEmail } from "../../common/utils/email/send.email.js";
-import { Hash, Compare } from "../../common/utils/security/hash.security.js";
-import { encrypt } from "../../common/utils/security/encrypt.security.js";
-import { GenerateToken } from "../../common/utils/token.service.js";
-import joi from "joi";
-import fs from "fs"; 
+import  {OAuth2Client} from "google-auth-library"
+import { ACCESS_SECRET_KEY, AUDIENCE, PREFIX, REFRESH_SECRET_KEY, SALT_ROUNDS} from "../../../config/config.service.js";
+import { deleteKey, get, get_key, keys, revoked_key, setValue } from "../../DB/redis/redis.service.js";
+import cloudinary from "../../common/utils/cloudinary.js";
 
-// 1. SignUp Logic
-export const signUp = async (req, res, next) => {
-    const uploadedFiles = [];
-    if (req.files?.attachments) {
-        req.files.attachments.forEach(file => uploadedFiles.push(file.path));
-    }
+export const signUp = async (req, res) => {
+  const { firstName,lastName,userName, email, password, cPassword, phone, gender, role } =
+    req.body;
 
-    try {
-        // --- 1. Joi Validation ---
-        const signUpSchema = joi.object({
-            firstName: joi.string().required(),
-            lastName: joi.string().required(),
-            email: joi.string().email().required(),
-            password: joi.string().required(),
-            cPassword: joi.string().valid(joi.ref('password')).required().messages({
-                'any.only': 'Confirmed password must match password 🔴'
-            }),
-            gender: joi.string().required(),
-            phone: joi.string().required()
-        }).unknown(true); 
+  if (password !== cPassword) {
+    throw new Error("Confirmed password must match the password 🔴", {
+      cause: 400,
+    });
+  }
 
-        const result = signUpSchema.validate(req.body, { abortEarly: false });
-        
-        if (result.error) {
-            const error = new Error("Validation error");
-            error.details = result.error.details;
-            error.cause = 400;
-            throw error;
-        }
-        
-        const { firstName, lastName, email, password, gender, phone } = result.value;
+  if (await db_service.findOne({ model: userModel, filter: { email } })) {
+    throw new Error(`Email ${email} already exist ❎`, { cause: 409 });
+  }
 
-        // --- 2. Check Existence ---
-        const userExist = await userModel.findOne({ email });
-        if (userExist) {
-            const error = new Error(`Email ${email} already exist 🔴`);
-            error.cause = 409;
-            throw error;
-        }
-
-        // --- 3. Security & OTP ---
-        const hashedPassword = Hash({ plain_text: password });
-        const encryptedPhone = encrypt({ plainText: phone });
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        const otpExpiration = new Date(Date.now() + 5 * 60 * 1000); 
-
-        // --- 4. Create User ---
-        const newUser = await userModel.create({
-            firstName,
-            lastName,
-            email,
-            password: hashedPassword,
-            gender,
-            phone: encryptedPhone,
-            otp,
-            otpExpiration,
-            confirmed: false,
-            profilePicture: uploadedFiles[0] || null, 
-            coverPicture: uploadedFiles 
-        });
-
-        // --- 5. Send Email ---
-        await sendEmail({
-            to: email,
-            subject: "Verify your account - Saraha App 💙",
-            html: `<h1>Your OTP is: ${otp}</h1>`
-        });
-
-        return res.status(201).json({ 
-            message: "User signed up successfully. Check your email for OTP ✅", 
-            data: { id: newUser._id, email: newUser.email } 
-        });
-
-    } catch (error) {
-        if (uploadedFiles.length > 0) {
-            uploadedFiles.forEach(path => {
-                if (fs.existsSync(path)) fs.unlinkSync(path);
-            });
-        }
-
-        return res.status(error.cause || 500).json({ 
-            message: error.message, 
-            errors: error.details || [] 
-        });
-    }
-};
-
-// 2. Confirm Email
-export const confirmEmail = async (req, res, next) => {
-    const { email, otp } = req.body;
-    const user = await userModel.findOne({ email });
+ const { secure_url, public_id } = await cloudinary.uploader.upload(
+    req.files.attachments[0].path,
+    { folder: "uploads/users" }
+);
     
-    if (!user) return res.status(404).json({ message: "User not found 🔴" });
-    if (user.otp !== otp) return res.status(400).json({ message: "Invalid OTP 🔴" });
-    if (new Date() > user.otpExpiration) return res.status(400).json({ message: "OTP has expired 🔴" });
+   const arr_paths = [];
 
-    await userModel.updateOne(
-        { email },
-        { confirmed: true, $unset: { otp: 1, otpExpiration: 1 } }
-    );
+for (const file of req.files.attachments) {
 
-    return res.status(200).json({ message: "Email confirmed successfully ✅" });
+  const { secure_url, public_id } = await cloudinary.uploader.upload(
+    file.path,
+    {
+      folder: "uploads/users",
+    }
+  );
+
+  arr_paths.push({ secure_url, public_id });
+}
+
+  const user = await db_service.create({
+  model: userModel,
+  data: {
+    firstName, 
+    lastName,  
+    email,
+    password: Hash({ plain_text: password, salt_rounds: SALT_ROUNDS }),
+    phone: encrypt(phone),
+    profilePicture: { secure_url, public_id }, 
+  }
+});
+
+  successResponse({
+    res,
+    status: 201,
+    message: `${userName} signed up successfully ✅`,
+    data: user,
+  });
 };
 
-// 3. SignIn
-export const signIn = async (req, res, next) => {
-    const { email, password } = req.body;
-    const user = await userModel.findOne({ email });
+
+
+export const signUpWithGmail = async (req,res) => {
+  const {idToken} = req.body
+
+  const client = new OAuth2Client();
+
+  const ticket = await client.verifyIdToken({
+      idToken,
+      audience: AUDIENCE
+  });
+  const payload = ticket.getPayload();
+ 
+  const {name , email , email_verified , picture} = payload
+
+  let user = await db_service.findOne({model:userModel , filter: {email}})
+  
+  if(!user){
+    user = await db_service.create({
+      model:userModel,
+      data:{
+        userName: name,
+        email,
+        confirmed: email_verified,
+        profilePicture: picture,
+        provider: providerEnum.google
+          }
+    })
+  }
+
+  if(user.provider == providerEnum.system){
+    throw new Error("Please, Login with system" , {cause: 400})
+  }
+
+ const access_token = GenerateToken({ 
+    payload: { id: user._id, email: user.email }, 
+    signature: "Amr" 
+});
+
+  successResponse({res,message:"Success Login with gmail ✅" , data: {access_token}})
+}
+
+
+export const getProfile = async (req, res) => {
+
+  const key = `profile::${req.user._id}`
+
+  const userExist = await get(key)
+  if(userExist){
+    console.log(`From Cache`);
+    return successResponse({res , data: userExist})
+  }
+  console.log(`Out Cache`);
+  
+  await setValue({key , value: req.user , ttl: 60 * 2})
+
+  successResponse({res,data:{...req.user._doc , phone:decrypt(req.user.phone)}})
+};
+
+export const refreshToken = async (req,res) => {
+  const {authorization} = req.headers
+
+  
+    if (!authorization) {
+      throw new Error("Token is required 🔴", { cause: 400 });
+    }
+  
+    const [prefix,token] = authorization.split(" ")
+    if(prefix !== PREFIX){
+      throw new Error("Ivalid prefix" , {cause: 400})
+    }
+  
+    const decoded = VerifyToken({token , secret_key: REFRESH_SECRET_KEY})
+  
+    if (!decoded || !decoded?.id) {
+      throw new Error("Invalid token ❎", { cause: 400 });
+    }
+  
+    const user = await db_service.findById({model:userModel , id:decoded.id , options:{select:"-password"}})
+  
+    if(!user){
+      throw new Error("User not found" , {cause: 404})
+    }
+
+      const revokeToken = await db_service.findOne({model:revokeTokenModel , filter:{tokenId: decoded.jti}})
     
-    if (!user || !user.confirmed) {
-        return res.status(401).json({ message: "Invalid email or email not confirmed 🔴" });
-    }
+      if(revokeToken){
+        throw new Error("Token revoked ❎" , {cause: 400})
+      }
 
-    const isPasswordMatch = Compare({ plain_text: password, cipher_text: user.password });
-    if (!isPasswordMatch) {
-        return res.status(401).json({ message: "Invalid password 🔴" });
-    }
+    const jwtid = randomUUID()
 
-    const token = GenerateToken({ payload: { id: user._id, email: user.email }, signature: "Amr" });
-    return res.status(200).json({ message: "Signed in successfully ✅", token });
+      const access_token = GenerateToken({
+        payload: { id: user._id },
+        secret_key: ACCESS_SECRET_KEY,
+        options: {
+          jwtid
+        },
+      });
+
+      successResponse({res, data: {access_token}})
+}
+
+export const shareProfile = async (req, res) => {
+  const { id } = req.params;
+
+  const user = await db_service.findById({
+    model: userModel,
+    id,
+    options: { select: "-password" },
+  });
+  if (!user) {
+    throw new Error("User not found", { cause: 404 });
+  }
+  user.phone = Decrypt(user.phone);
+  successResponse({ res, data: user });
 };
 
-// 4. Get Profile
-export const getProfile = async (req, res, next) => {
-    try {
-        const user = await userModel.findById(req.user.id);
-        return res.status(200).json({ message: "Done ✅", user });
-    } catch (error) {
-        return res.status(500).json({ message: error.message });
-    }
-};
+export const updateProfile = async (req,res) => {
+  let {firstName,lastName,gender,phone} = req.body
 
+  if(phone){
+    phone = encrypt(phone)
+  }
 
+  const user = await db_service.findOneAndUpdate({
+    model: userModel,
+    filter: {_id: req.user._id},
+    update: {firstName,lastName,gender,phone},
+  })
 
+   if(!user){
+    throw new Error("User not exist")
+   }
 
+   await deleteKey(`profile::${req.user._id}`)
 
+   successResponse({res , data: user})
+}
 
-export const logout = async (req, res, next) => {
-    const { flag } = req.query;
+export const updatePassword = async (req,res) => {
+  let {oldPassword,newPassword} = req.body
 
-    if (flag === "all") {
-        req.user.changeCredentialTime = new Date();
-        await req.user.save();
-        
-        await db_service.deleteMany({
-            model: reModel,
-            filter: { userId: req.user._id }
-        });
-    } else {
-        await db_service.create({
-            model: reModel,
-            data: {
-                tokenId: req.decoded.jti, 
-                userId: req.user._id,
-                expiredAt: new Date(req.decoded.exp * 1000)
-            }
-        });
-    }
+  if(!Compare({plain_text: oldPassword , cipher_text: req.user.password})){
+    throw new Error("Invalid old password")
+  }
 
-    return successResponse({ res });
-};
+    const hash = Hash({plain_text: newPassword, salt_rounds: SALT_ROUNDS})
+
+    req.user.password = hash
+
+  await req.user.save()
+
+   successResponse({res})
+}
+
+export const logout = async (req,res) => {
+  const {flag} = req.query
+
+  if(flag == "all"){
+    req.user.changeCredential = new Date()
+    await req.user.save()
+    await deleteKey(await keys(get_key(req.user._id)))
+  } else {
+    await setValue({
+      key: revoked_key({userId: req.user._id , jti: req.decoded.jti}),
+      value: req.decoded.jti,
+      ttl: req.decoded.exp - Math.floor(Date.now() / 1000)
+    })
+  }
+  successResponse({res})
+}
 
 // Upload Cover Images (Max 2)
 export const uploadCover = async (req, res, next) => {
@@ -212,3 +284,82 @@ export const removeProfilePic = async (req, res, next) => {
     return res.status(200).json({ message: "Image deleted from disk ✅" });
 };
 
+
+
+//Assignment13
+
+export const signIn = async (req, res) => {
+    const { email, password } = req.body;
+    const user = await userModel.findOne({ email, provider: "system" });
+
+    if (!user) throw new Error("Invalid email", { cause: 400 });
+
+    if (user.banUntil && user.banUntil > Date.now()) {
+        const remaining = Math.ceil((user.banUntil - Date.now()) / 60000);
+        throw new Error(`Banned! Try again after ${remaining} min`, { cause: 403 });
+    }
+
+    const match = Compare({ plain_text: password, cipher_text: user.password });
+    
+    if (!match) {
+        user.failedAttempts += 1;
+        if (user.failedAttempts >= 5) {
+            user.banUntil = new Date(Date.now() + 5 * 60 * 1000); 
+            user.failedAttempts = 0;
+        }
+        await user.save();
+        throw new Error("Invalid password", { cause: 400 });
+    }
+
+    if (user.is2FAEnabled) {
+        const otp = await generateOtp(); 
+        await sendEmail({ to: email, html: `<h1>Login Code: ${otp}</h1>` });
+        await setValue({ key: `2FA_login:${user._id}`, value: otp, ttl: 300 });  
+        return res.status(200).json({ message: "OTP sent to email for 2FA" });
+    }
+
+    user.failedAttempts = 0;
+    await user.save();
+    const access_token = GenerateToken({ payload: { id: user._id }, secret_key: ACCESS_SECRET_KEY });
+    return res.status(200).json({ message: "Logged in ✅", access_token });
+};
+
+// طلب تفعيل الـ 2FA
+export const enable2FA = async (req, res) => {
+    const otp = await generateOtp();
+    await sendEmail({ to: req.user.email, html: `Enable 2FA Code: ${otp}` });
+    await setValue({ key: `enable_2FA:${req.user._id}`, value: otp, ttl: 300 });
+    return res.status(200).json({ message: "Check email for OTP" });
+};
+
+export const confirm2FA = async (req, res) => {
+    const { otp } = req.body;
+    const savedOtp = await get(`enable_2FA:${req.user._id}`);
+    if (otp !== savedOtp) throw new Error("Invalid OTP", { cause: 400 });
+
+    await userModel.findByIdAndUpdate(req.user._id, { is2FAEnabled: true });
+    return res.status(200).json({ message: "2FA Enabled successfully ✅" });
+};
+
+// Forget Password
+
+export const forgetPassword = async (req, res) => {
+    const { email } = req.body;
+    const user = await userModel.findOne({ email });
+    if (!user) throw new Error("User not found", { cause: 404 });
+
+    const otp = await generateOtp();
+    await sendEmail({ to: email, html: `Reset Code: ${otp}` });
+    await setValue({ key: `reset_pass:${email}`, value: otp, ttl: 600 });
+    return res.json({ message: "OTP sent" });
+};
+
+export const resetPassword = async (req, res) => {
+    const { email, otp, newPassword } = req.body;
+    const savedOtp = await get(`reset_pass:${email}`);
+    if (otp !== savedOtp) throw new Error("Invalid OTP", { cause: 400 });
+
+    const hash = Hash({ plain_text: newPassword, salt_rounds: 8 });
+    await userModel.findOneAndUpdate({ email }, { password: hash, failedAttempts: 0 });
+    return res.json({ message: "Password reset done ✅" });
+};

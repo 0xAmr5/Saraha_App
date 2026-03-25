@@ -1,89 +1,57 @@
-import mongoose from "mongoose";
+import mongoose, { Schema, model } from "mongoose";
 import { genderEnum, providerEnum } from "../../common/enum/user.enum.js";
 
-const userSchema = new mongoose.Schema({
+const userSchema = new Schema({
     firstName: { type: String, required: true, minLength: 2, trim: true },
     lastName: { type: String, required: true, minLength: 2, trim: true },
     email: { type: String, required: true, unique: true, trim: true },
     password: { type: String, required: true, trim: true },
-    gender: { type: String, enum: Object.values(genderEnum), default: genderEnum.male },
-    provider: { type: String, enum: Object.values(providerEnum), default: providerEnum.system },
+    gender: { 
+        type: String, 
+        enum: Object.values(genderEnum), 
+        default: genderEnum.male 
+    },
+    provider: { 
+        type: String, 
+        enum: Object.values(providerEnum), 
+        default: providerEnum.system 
+    },
     phone: { type: String, required: true },
-    profilePicture: String,
-    confirmed: Boolean,
+    profilePicture: {
+        secure_url: String,
+        public_id: String
+    },
+    coverPictures: [{ secure_url: String, public_id: String }], // لأسايمنت 12
+    gallery: [String], // للصور القديمة
+    confirmed: { type: Boolean, default: false },
+    
+    // --- حقول أسايمنت 13 (Security & 2FA) ---
+    failedAttempts: { type: Number, default: 0 }, // عدّاد المحاولات الفاشلة
+    banUntil: { type: Date }, // تاريخ انتهاء الباند المؤقت
+    is2FAEnabled: { type: Boolean, default: false }, // هل مفعل التحقق بخطوتين؟
+    
+    // --- حقول الـ Visits (أسايمنت 12) ---
+    visitCount: { type: Number, default: 0 },
+    
+    // --- حقول الـ OTP ---
+    otp: { type: String },
+    otpExpiration: { type: Date }
 }, {
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true }
 });
 
+// Virtual لنوع الـ UserName
 userSchema.virtual("userName").get(function() {
     return `${this.firstName} ${this.lastName}`;
 });
 
-userSchema.add({
-    otp: { type: String },
-    otpExpiration: { type: Date }
+userSchema.index({ createdAt: 1 }, { 
+    expireAfterSeconds: 86400, 
+    partialFilterExpression: { confirmed: false } 
 });
 
-const userModel = mongoose.models.user || mongoose.model("user", userSchema);
+const userModel = mongoose.models.user || model("user", userSchema);
+
 export default userModel;
-
-
-import { OAuth2Client } from 'google-auth-library';
-const client = new OAuth2Client();
-
-export const loginWithGmail = async (req, res, next) => {
-    const { idToken } = req.body;
-    
-    try {
-        const ticket = await client.verifyIdToken({
-            idToken,
-            audience: process.env.GOOGLE_CLIENT_ID, 
-        });
-        const { email, given_name, family_name } = ticket.getPayload();
-
-        let user = await userModel.findOne({ email });
-        
-        if (!user) {
-            user = await userModel.create({
-                firstName: given_name,
-                lastName: family_name,
-                email,
-                password: Hash({ plain_text: "OAuth_Default_Password" }), 
-                confirmed: true, 
-                provider: "google"
-            });
-        }
-
-        const token = GenerateToken({ 
-            payload: { id: user._id, email: user.email }, 
-            signature: "Amr" 
-        });
-        
-        return res.status(200).json({ message: "Success ✅", token });
-    } catch (error) {
-        return res.status(400).json({ message: "Invalid Google Token 🔴", error: error.message });
-    }
-};
-
-// Get Profile (Increase visit count)
-export const getProfile = async (req, res, next) => {
-    const user = await userModel.findByIdAndUpdate(
-        req.params.id, 
-        { $inc: { visitCount: 1 } }, 
-        { new: true }
-    ).select("-visitCount");
-    
-    return res.status(200).json({ user });
-};
-
-
-
-// Get Visit Stats (Admin only)
-export const getVisitStats = async (req, res, next) => {
-    if (req.user.role !== 'admin') return next(new Error("Not authorized 🔴", { cause: 403 }));
-    
-    const user = await userModel.findById(req.params.id).select("visitCount");
-    return res.status(200).json({ totalVisits: user.visitCount });
-};
