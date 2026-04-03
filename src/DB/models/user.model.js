@@ -21,28 +21,37 @@ const userSchema = new Schema({
         secure_url: String,
         public_id: String
     },
-    coverPictures: [{ secure_url: String, public_id: String }], // لأسايمنت 12
-    gallery: [String], // للصور القديمة
+    coverPictures: [{ secure_url: String, public_id: String }], 
+    
+    gallery: [{
+        secure_url: String,
+        public_id: String
+    }], 
+
     confirmed: { type: Boolean, default: false },
     
     // --- حقول أسايمنت 13 (Security & 2FA) ---
-    failedAttempts: { type: Number, default: 0 }, // عدّاد المحاولات الفاشلة
-    banUntil: { type: Date }, // تاريخ انتهاء الباند المؤقت
-    is2FAEnabled: { type: Boolean, default: false }, // هل مفعل التحقق بخطوتين؟
+    failedAttempts: { type: Number, default: 0 }, 
+    banUntil: { type: Date }, 
+    is2FAEnabled: { type: Boolean, default: false }, 
     
     // --- حقول الـ Visits (أسايمنت 12) ---
     visitCount: { type: Number, default: 0 },
     
     // --- حقول الـ OTP ---
     otp: { type: String },
-    otpExpiration: { type: Date }
+    otpExpiration: { type: Date },
+    changeCredentialTime: { type: Date }
 }, {
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true }
 });
 
-// Virtual لنوع الـ UserName
+// --- حقول الـ Forgot Password (أسايمنت 14) ---
+    changeCredentialTime: { type: Date };
+
+// Virtual للـ userName
 userSchema.virtual("userName").get(function() {
     return `${this.firstName} ${this.lastName}`;
 });

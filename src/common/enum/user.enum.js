@@ -12,3 +12,8 @@ export const roleEnum = {
     user: 'user',
     admin: 'admin'
 };
+
+export const emailEnum = {
+    confirmEmail: "confirmEmail",
+    forgetPassword: "forgetPassword"
+};
